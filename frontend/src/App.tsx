@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import "./App.css";
 
-const API_URL = "http://sertif-pelatihan.sistemedu.com/web/run.php";
-const APACHE_BASE = "http://sertif-pelatihan.sistemedu.com";
+const API_URL = "https://sertif-pelatihan.sistemedu.com/Sertif_Pelatihan/web/run.php";
+const APACHE_BASE = "https://sertif-pelatihan.sistemedu.com";
 
 type FileWithPreview = File & { __preview?: string };
 
@@ -25,7 +25,7 @@ export default function App() {
   const [dragD, setDragD] = useState(false);
 
   const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0); // UI progress
+  const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState("");
   const [ok, setOk] = useState<boolean | null>(null);
   const [files, setFiles] = useState<string[]>([]);
@@ -127,7 +127,6 @@ export default function App() {
     setProgress(8);
     resetFeedback();
 
-    // smooth UI progress
     const timer = setInterval(() => {
       setProgress((p) => (p < 92 ? p + Math.max(1, Math.round((92 - p) / 10)) : p));
     }, 220);
@@ -138,15 +137,27 @@ export default function App() {
       form.append("data", data);
 
       const res = await fetch(API_URL, { method: "POST", body: form });
-      const json = await res.json();
+
+      // ambil text dulu supaya kalau HTML error page, kita bisa tampilkan
+      const text = await res.text();
+
+      let json: any;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        throw new Error(
+          `Server tidak mengembalikan JSON. HTTP ${res.status}\n` +
+            `Body (potongan):\n${text.slice(0, 400)}`
+        );
+      }
 
       setOk(!!json.ok);
       setMessage(json.message || (json.ok ? "Sukses." : "Gagal."));
       setFiles(Array.isArray(json.files) ? json.files : []);
       setProgress(100);
-    } catch (e) {
+    } catch (e: any) {
       setOk(false);
-      setMessage("Gagal memproses. Pastikan Apache aktif dan run.php bisa diakses.");
+      setMessage(e?.message || "Gagal memproses. Pastikan run.php bisa diakses.");
       setProgress(100);
     } finally {
       clearInterval(timer);
@@ -233,7 +244,13 @@ export default function App() {
                 )}
                 <label className="btnSmall">
                   Pilih file
-                  <input className="hiddenInput" type="file" accept=".png,.jpg,.jpeg" multiple onChange={onPickTemplates} />
+                  <input
+                    className="hiddenInput"
+                    type="file"
+                    accept=".png,.jpg,.jpeg"
+                    multiple
+                    onChange={onPickTemplates}
+                  />
                 </label>
               </div>
             </div>
@@ -262,7 +279,12 @@ export default function App() {
                       <div className="thumbMeta">{formatBytes(f.size)}</div>
                     </div>
 
-                    <button className="thumbRemove" type="button" onClick={() => removeTemplateAt(i)} aria-label="hapus">
+                    <button
+                      className="thumbRemove"
+                      type="button"
+                      onClick={() => removeTemplateAt(i)}
+                      aria-label="hapus"
+                    >
                       ×
                     </button>
                   </div>
