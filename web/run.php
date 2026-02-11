@@ -1,16 +1,70 @@
 <?php
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
+/**
+ * web/run.php (FULL) - mPDF + PhpSpreadsheet (TANPA PYTHON)
+ * Vendor autoload: engine/vendor/autoload.php
+ */
 
+declare(strict_types=1);
+
+$DEBUG = true;
+
+ob_start();
 header('Content-Type: application/json; charset=utf-8');
+
+if ($DEBUG) {
+  ini_set('display_errors', '1');
+  ini_set('display_startup_errors', '1');
+  error_reporting(E_ALL);
+} else {
+  ini_set('display_errors', '0');
+  error_reporting(E_ALL);
+}
+
+set_exception_handler(function(Throwable $e) {
+  $garbage = ob_get_clean();
+  http_response_code(500);
+  echo json_encode([
+    "ok" => false,
+    "message" => "EXCEPTION: " . $e->getMessage(),
+    "files" => [],
+    "debug" => [
+      "type" => get_class($e),
+      "file" => $e->getFile(),
+      "line" => $e->getLine(),
+      "trace" => array_slice(explode("\n", $e->getTraceAsString()), 0, 18),
+      "garbage" => $garbage,
+    ]
+  ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+  exit;
+});
+
+register_shutdown_function(function() {
+  $err = error_get_last();
+  if (!$err) return;
+
+  $fatalTypes = [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR];
+  if (!in_array($err["type"], $fatalTypes, true)) return;
+
+  $garbage = ob_get_clean();
+  http_response_code(500);
+  echo json_encode([
+    "ok" => false,
+    "message" => "FATAL: " . ($err["message"] ?? "Unknown fatal error"),
+    "files" => [],
+    "debug" => [
+      "file" => $err["file"] ?? null,
+      "line" => $err["line"] ?? null,
+      "type" => $err["type"] ?? null,
+      "garbage" => $garbage,
+    ]
+  ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+  exit;
+});
 
 // =========================
 // CORS (LOCAL)
 // =========================
-$allowed = [
-  "http://localhost:5173",
-];
-
+$allowed = ["http://localhost:5173"];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if ($origin && in_array($origin, $allowed, true)) {
   header("Access-Control-Allow-Origin: $origin");
@@ -19,35 +73,28 @@ if ($origin && in_array($origin, $allowed, true)) {
 header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type");
 
-if ($_SERVER["REQUEST_METHOD"] === "OPTIONS") {
+if (($_SERVER["REQUEST_METHOD"] ?? '') === "OPTIONS") {
   http_response_code(204);
+  ob_end_clean();
   exit;
 }
 
 // =========================
 // HELPERS
 // =========================
-function respond($ok, $message, $files = [], $extra = []) {
+function respond(bool $ok, string $message, array $files = [], array $extra = []): void {
+  $garbage = ob_get_clean();
+  if ($garbage) $extra["debug_garbage"] = $garbage;
+
   echo json_encode(array_merge([
-    "ok" => (bool)$ok,
-    "message" => (string)$message,
-    "files" => (array)$files
+    "ok" => $ok,
+    "message" => $message,
+    "files" => $files,
   ], $extra), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
   exit;
 }
 
-function rrmdir($dir) {
-  if (!is_dir($dir)) return;
-  foreach (scandir($dir) as $item) {
-    if ($item === "." || $item === "..") continue;
-    $path = $dir . DIRECTORY_SEPARATOR . $item;
-    if (is_dir($path)) rrmdir($path);
-    else @unlink($path);
-  }
-  @rmdir($dir);
-}
-
-function make_zip($zipPath, $filesAbs) {
+function make_zip(string $zipPath, array $filesAbs): void {
   if (!class_exists("ZipArchive")) {
     throw new Exception("ZipArchive tidak tersedia. Aktifkan extension zip di PHP.");
   }
@@ -62,70 +109,32 @@ function make_zip($zipPath, $filesAbs) {
   $zip->close();
 }
 
-/**
- * Run command with timeout (avoid hanging)
- * Return: [exitCode, output, timedOut]
- */
-function run_cmd_with_timeout($cmd, $timeoutSeconds = 180) {
-  $descriptorspec = [
-    0 => ["pipe", "r"],
-    1 => ["pipe", "w"],
-    2 => ["pipe", "w"],
-  ];
-
-  $process = proc_open($cmd, $descriptorspec, $pipes);
-  if (!is_resource($process)) {
-    return [999, "Gagal menjalankan proses (proc_open).", false];
+function sanitize_filename(string $s): string {
+  $keep = " _-().,";
+  $s = trim($s);
+  $out = "";
+  $len = strlen($s);
+  for ($i=0; $i<$len; $i++) {
+    $ch = $s[$i];
+    if (ctype_alnum($ch) || str_contains($keep, $ch)) $out .= $ch;
   }
+  $out = trim($out);
+  return $out !== "" ? $out : "NONAME";
+}
 
-  fclose($pipes[0]);
-  stream_set_blocking($pipes[1], false);
-  stream_set_blocking($pipes[2], false);
-
-  $output = "";
-  $start = time();
-  $timedOut = false;
-
-  while (true) {
-    $status = proc_get_status($process);
-    $running = $status["running"];
-
-    $output .= stream_get_contents($pipes[1]);
-    $output .= stream_get_contents($pipes[2]);
-
-    if (!$running) break;
-
-    if ((time() - $start) > $timeoutSeconds) {
-      $timedOut = true;
-      proc_terminate($process);
-      usleep(300000);
-      $status2 = proc_get_status($process);
-      if ($status2["running"]) proc_terminate($process, 9);
-      break;
-    }
-
-    usleep(120000);
-  }
-
-  $output .= stream_get_contents($pipes[1]);
-  $output .= stream_get_contents($pipes[2]);
-
-  fclose($pipes[1]);
-  fclose($pipes[2]);
-
-  $exitCode = proc_close($process);
-  return [$exitCode, $output, $timedOut];
+function pt_to_mm(float $pt): float {
+  return $pt * 0.3527777778;
 }
 
 // =========================
 // METHOD GUARD
 // =========================
-if ($_SERVER["REQUEST_METHOD"] !== "POST") {
+if (($_SERVER["REQUEST_METHOD"] ?? '') !== "POST") {
   respond(false, "Gunakan POST.");
 }
 
 // =========================
-// PATHS (base = Sertif_Pelatihan)
+// BASE PATHS
 // =========================
 $base = realpath(__DIR__ . "/..");
 if (!$base) respond(false, "Base path tidak valid.");
@@ -141,6 +150,27 @@ $downloadDir = $base . DIRECTORY_SEPARATOR . "web" . DIRECTORY_SEPARATOR . "down
 if (!is_writable($uploadDir))   respond(false, "uploads tidak writable: $uploadDir");
 if (!is_writable($outputRoot))  respond(false, "output tidak writable: $outputRoot");
 if (!is_writable($downloadDir)) respond(false, "download tidak writable: $downloadDir");
+
+// =========================
+// AUTOLOAD (engine/vendor)
+// =========================
+$AUTOLOAD = $base . DIRECTORY_SEPARATOR . "engine" . DIRECTORY_SEPARATOR . "vendor" . DIRECTORY_SEPARATOR . "autoload.php";
+if (!file_exists($AUTOLOAD)) {
+  respond(false, "autoload.php tidak ditemukan di engine/vendor. Jalankan composer install di folder engine.", [], [
+    "debug" => ["expected_autoload" => $AUTOLOAD]
+  ]);
+}
+require_once $AUTOLOAD;
+
+if (!class_exists("\\PhpOffice\\PhpSpreadsheet\\IOFactory")) {
+  respond(false, "PhpSpreadsheet tidak tersedia. Pastikan phpoffice/phpspreadsheet terinstall.");
+}
+if (!class_exists("\\Mpdf\\Mpdf")) {
+  respond(false, "mPDF tidak tersedia. Pastikan mpdf/mpdf terinstall.");
+}
+
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use Mpdf\Mpdf;
 
 // =========================
 // FILES VALIDATION
@@ -198,124 +228,218 @@ for ($i = 0; $i < count($templates["name"]); $i++) {
 }
 
 // =========================
-// PYTHON PATH (Windows first)
+// READ EXCEL
 // =========================
-$pythonCandidates = [
-  // Windows venv
-  $base . DIRECTORY_SEPARATOR . ".venv" . DIRECTORY_SEPARATOR . "Scripts" . DIRECTORY_SEPARATOR . "python.exe",
-  $base . DIRECTORY_SEPARATOR . "venv"  . DIRECTORY_SEPARATOR . "Scripts" . DIRECTORY_SEPARATOR . "python.exe",
+$spreadsheet = IOFactory::load($dataPath);
+$sheet = $spreadsheet->getActiveSheet();
+$rowsRaw = $sheet->toArray(null, true, true, true);
 
-  // Linux venv
-  $base . DIRECTORY_SEPARATOR . ".venv" . DIRECTORY_SEPARATOR . "bin" . DIRECTORY_SEPARATOR . "python",
-  $base . DIRECTORY_SEPARATOR . "venv"  . DIRECTORY_SEPARATOR . "bin" . DIRECTORY_SEPARATOR . "python",
-
-  // System python (Windows)
-  "python",
-
-  // System python (Linux)
-  "python3",
-];
-
-$python = null;
-foreach ($pythonCandidates as $cand) {
-  if ($cand === "python" || $cand === "python3") { $python = $cand; break; }
-  if (file_exists($cand)) { $python = $cand; break; }
-}
-if (!$python) $python = "python";
-
-$script = $base . DIRECTORY_SEPARATOR . "engine" . DIRECTORY_SEPARATOR . "generate.py";
-if (!file_exists($script)) {
+$headersRow = $rowsRaw[1] ?? null;
+if (!$headersRow) {
   @unlink($dataPath);
   foreach ($templatePaths as $tp) @unlink($tp);
-  respond(false, "generate.py tidak ditemukan: $script");
+  respond(false, "Excel kosong / tidak ada header di baris 1.");
 }
 
+$colMap = [];
+foreach ($headersRow as $col => $val) {
+  $name = strtolower(trim((string)$val));
+  if ($name !== "") $colMap[$name] = $col;
+}
+if (!isset($colMap["nama"])) {
+  @unlink($dataPath);
+  foreach ($templatePaths as $tp) @unlink($tp);
+  respond(false, "Excel wajib punya header kolom: nama (baris 1).");
+}
+
+$rows = [];
+for ($i = 2; $i <= count($rowsRaw); $i++) {
+  $r = $rowsRaw[$i] ?? null;
+  if (!$r) continue;
+
+  $nama = trim((string)($r[$colMap["nama"]] ?? ""));
+  if ($nama === "") continue;
+
+  $instansi = isset($colMap["instansi"]) ? trim((string)($r[$colMap["instansi"]] ?? "")) : "";
+  $nomor    = isset($colMap["nomor"]) ? trim((string)($r[$colMap["nomor"]] ?? "")) : "";
+
+  $rows[] = ["nama" => $nama, "instansi" => $instansi, "nomor" => $nomor];
+}
+
+if (!$rows) {
+  @unlink($dataPath);
+  foreach ($templatePaths as $tp) @unlink($tp);
+  respond(false, "Tidak ada data peserta terbaca. Pastikan kolom 'nama' terisi mulai baris 2.");
+}
+
+// =========================
+// PDF GENERATOR (mPDF) - FIX strict font access
+// =========================
+function generate_pdfs_mpdf(string $base, array $templatesAbs, array $rows, string $outDirAbs): array {
+  // A4 Landscape mm
+  $pageW = 297.0;
+  $pageH = 210.0;
+
+  // posisi (dari generate.py)
+  $NOMOR_LEFT_MM   = pt_to_mm(74);
+  $NOMOR_TOP_MM    = pt_to_mm(87);
+  $NOMOR_BOTTOM_MM = pt_to_mm(32);
+  $NOMOR_FONT_PT   = 12;
+  $NOMOR_ANCHOR = "TOP_LEFT"; // TOP_LEFT / BOTTOM_LEFT
+
+  $NAMA_Y_RATIO = 0.50;
+  $NAMA_Y_OFFSET_MM = pt_to_mm(5);
+  $NAMA_FONT_PT = 30;
+
+  $INST_Y_RATIO = 0.44;
+  $INST_Y_OFFSET_MM = pt_to_mm(0);
+  $INST_FONT_PT = 14;
+
+  // fonts
+  $fontNamaPath = $base . DIRECTORY_SEPARATOR . "engine" . DIRECTORY_SEPARATOR . "assets" . DIRECTORY_SEPARATOR . "fonts" . DIRECTORY_SEPARATOR . "Caudex-Regular.ttf";
+  $fontInfoPath = $base . DIRECTORY_SEPARATOR . "engine" . DIRECTORY_SEPARATOR . "assets" . DIRECTORY_SEPARATOR . "fonts" . DIRECTORY_SEPARATOR . "Garet-Regular.ttf";
+  if (!file_exists($fontNamaPath)) throw new Exception("Font nama tidak ditemukan: $fontNamaPath");
+  if (!file_exists($fontInfoPath)) throw new Exception("Font info tidak ditemukan: $fontInfoPath");
+
+  $tmpDir = $base . DIRECTORY_SEPARATOR . "engine" . DIRECTORY_SEPARATOR . "tmp_mpdf";
+  @mkdir($tmpDir, 0777, true);
+
+  // mPDF config: set fontDir & fontdata DI CONSTRUCTOR (tanpa akses property)
+  $customFontDir = dirname($fontNamaPath); // same dir
+  $customFontDir2 = dirname($fontInfoPath);
+
+  $generated = [];
+  @mkdir($outDirAbs, 0777, true);
+
+  foreach ($rows as $row) {
+    $nama = trim((string)($row["nama"] ?? ""));
+    if ($nama === "") continue;
+
+    $instansi = trim((string)($row["instansi"] ?? ""));
+    $nomor = trim((string)($row["nomor"] ?? ""));
+
+    $outPath = $outDirAbs . DIRECTORY_SEPARATOR . "SERTIFIKAT_" . sanitize_filename($nama) . ".pdf";
+
+    // Pakai default fontdir mPDF lewat constant, lalu tambah custom dir
+    $mpdf = new Mpdf([
+      "mode" => "utf-8",
+      "format" => [$pageW, $pageH],
+      "orientation" => "L",
+      "margin_left" => 0,
+      "margin_right" => 0,
+      "margin_top" => 0,
+      "margin_bottom" => 0,
+      "tempDir" => $tmpDir,
+
+      // ✅ FIX strict: set font dir & fontdata via config
+      "fontDir" => array_values(array_unique([
+        $customFontDir,
+        $customFontDir2,
+      ])),
+      "fontdata" => [
+        "font_nama" => ["R" => basename($fontNamaPath)],
+        "font_info" => ["R" => basename($fontInfoPath)],
+      ],
+      "default_font" => "font_info",
+    ]);
+
+    $mpdf->SetDefaultBodyCSS("margin", "0");
+    $mpdf->SetDefaultBodyCSS("padding", "0");
+
+    foreach ($templatesAbs as $idx => $tplAbs) {
+      if ($idx > 0) $mpdf->AddPage();
+
+      // background full page
+      $bg = "
+        <div style='position:fixed; left:0; top:0; width:{$pageW}mm; height:{$pageH}mm; z-index:-1;'>
+          <img src='{$tplAbs}' style='width:{$pageW}mm; height:{$pageH}mm;' />
+        </div>
+      ";
+      $mpdf->WriteHTML($bg);
+
+      // NOMOR semua halaman
+      if ($nomor !== "") {
+        $yNomor = ($NOMOR_ANCHOR === "BOTTOM_LEFT")
+          ? ($pageH - $NOMOR_BOTTOM_MM)
+          : $NOMOR_TOP_MM;
+
+        $mpdf->WriteHTML("
+          <div style='position:fixed; left:{$NOMOR_LEFT_MM}mm; top:{$yNomor}mm; font-family:font_info; font-size:{$NOMOR_FONT_PT}pt;'>
+            Nomor: " . htmlspecialchars($nomor, ENT_QUOTES, 'UTF-8') . "
+          </div>
+        ");
+      }
+
+      // NAMA + INSTANSI hanya halaman 1
+      if ($idx === 0) {
+        $namaFromBottom = ($pageH * $NAMA_Y_RATIO) + $NAMA_Y_OFFSET_MM;
+        $namaTop = $pageH - $namaFromBottom;
+
+        $mpdf->WriteHTML("
+          <div style='position:fixed; left:0; top:{$namaTop}mm; width:{$pageW}mm; text-align:center;
+                      font-family:font_nama; font-size:{$NAMA_FONT_PT}pt;'>
+            " . htmlspecialchars($nama, ENT_QUOTES, 'UTF-8') . "
+          </div>
+        ");
+
+        if ($instansi !== "") {
+          $instFromBottom = ($pageH * $INST_Y_RATIO) + $INST_Y_OFFSET_MM;
+          $instTop = $pageH - $instFromBottom;
+
+          $mpdf->WriteHTML("
+            <div style='position:fixed; left:0; top:{$instTop}mm; width:{$pageW}mm; text-align:center;
+                        font-family:font_info; font-size:{$INST_FONT_PT}pt;'>
+              " . htmlspecialchars($instansi, ENT_QUOTES, 'UTF-8') . "
+            </div>
+          ");
+        }
+      }
+    }
+
+    $mpdf->Output($outPath, \Mpdf\Output\Destination::FILE);
+    $generated[] = $outPath;
+  }
+
+  return $generated;
+}
+
+// =========================
+// RUN GENERATE
+// =========================
 $jobOutDir = $outputRoot . DIRECTORY_SEPARATOR . "job_" . $stamp;
 @mkdir($jobOutDir, 0777, true);
 
-$logFile = $jobOutDir . DIRECTORY_SEPARATOR . "run.log";
+$pdfs = generate_pdfs_mpdf($base, $templatePaths, $rows, $jobOutDir);
 
-$tplArg = implode("|", $templatePaths);
-
-$cmd =
-  escapeshellarg($python) . " " .
-  escapeshellarg($script) .
-  " --templates " . escapeshellarg($tplArg) .
-  " --data " . escapeshellarg($dataPath) .
-  " --outdir " . escapeshellarg($jobOutDir);
-
-file_put_contents($logFile, "CMD:\n$cmd\n\n", FILE_APPEND);
-
-// =========================
-// RUN PYTHON
-// =========================
-$timeoutSeconds = 180;
-$fullCmd = $cmd . " 2>&1";
-list($exitCode, $out, $timedOut) = run_cmd_with_timeout($fullCmd, $timeoutSeconds);
-
-file_put_contents(
-  $logFile,
-  "EXIT_CODE: $exitCode\nTIMED_OUT: " . ($timedOut ? "YES" : "NO") . "\n\nOUTPUT:\n$out\n",
-  FILE_APPEND
-);
-
-$allFiles = glob($jobOutDir . DIRECTORY_SEPARATOR . "*");
-$allNames = $allFiles ? array_map("basename", $allFiles) : [];
-
-$pdfs = glob($jobOutDir . DIRECTORY_SEPARATOR . "*.pdf");
 if (!$pdfs) {
   @unlink($dataPath);
   foreach ($templatePaths as $tp) @unlink($tp);
-
-  respond(false, $timedOut ? "Proses Python timeout > {$timeoutSeconds}s." : "Tidak ada PDF dihasilkan.", [], [
-    "debug" => [
-      "python" => $python,
-      "cmd" => $cmd,
-      "exitCode" => $exitCode,
-      "timedOut" => $timedOut,
-      "python_output" => trim((string)$out),
-      "jobOutDir" => $jobOutDir,
-      "logFile" => $logFile,
-      "outdir_files" => $allNames,
-    ]
-  ]);
+  respond(false, "Tidak ada PDF dihasilkan.");
 }
 
-// copy pdf ke publik
+// =========================
+// COPY PDF to public + ZIP
+// =========================
+$projectName = basename($base);
+$baseUrl = "/" . $projectName;
+
 $pdfLinks = [];
 $pdfPublicAbs = [];
-foreach ($pdfs as $p) {
-  $cleanName = basename($p);
-  $dest = $downloadDir . DIRECTORY_SEPARATOR . $cleanName;
-  @copy($p, $dest);
 
-  // Local URL (XAMPP)
-  $pdfLinks[] = "/Sertif_Pelatihan/web/download/" . $cleanName;
+foreach ($pdfs as $absPdf) {
+  $name = basename($absPdf);
+  $dest = $downloadDir . DIRECTORY_SEPARATOR . $name;
+  @copy($absPdf, $dest);
+
+  $pdfLinks[] = $baseUrl . "/web/download/" . $name;
   $pdfPublicAbs[] = $dest;
 }
 
-// zip
 $zipName = "SERTIFIKAT_" . $stamp . ".zip";
 $zipAbs  = $downloadDir . DIRECTORY_SEPARATOR . $zipName;
-$zipLink = "/Sertif_Pelatihan/web/download/" . $zipName;
+$zipLink = $baseUrl . "/web/download/" . $zipName;
 
-try {
-  make_zip($zipAbs, $pdfPublicAbs);
-} catch (Exception $e) {
-  @unlink($dataPath);
-  foreach ($templatePaths as $tp) @unlink($tp);
-
-  respond(false, "Gagal membuat ZIP: " . $e->getMessage(), [], [
-    "debug" => [
-      "python" => $python,
-      "cmd" => $cmd,
-      "python_output" => trim((string)$out),
-      "jobOutDir" => $jobOutDir,
-      "logFile" => $logFile,
-      "outdir_files" => $allNames,
-    ]
-  ]);
-}
+make_zip($zipAbs, $pdfPublicAbs);
 
 // cleanup uploads
 @unlink($dataPath);
@@ -323,9 +447,8 @@ foreach ($templatePaths as $tp) @unlink($tp);
 
 respond(true, "Selesai generate.", array_merge([$zipLink], $pdfLinks), [
   "debug" => [
-    "exitCode" => $exitCode,
-    "timedOut" => $timedOut,
-    "python" => $python,
-    "logFile" => $logFile
+    "project" => $projectName,
+    "pdfCount" => count($pdfs),
+    "zip" => $zipName,
   ]
 ]);
