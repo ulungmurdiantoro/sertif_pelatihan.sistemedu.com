@@ -5,23 +5,23 @@ ini_set('display_errors', 1);
 header('Content-Type: application/json; charset=utf-8');
 
 // =========================
-// CORS (PROD + LOCAL)
+// CORS (LOCAL + PROD)
 // =========================
-$allowed_origins = [
+$allowed = [
   "http://localhost:5173",
   "https://sertif-pelatihan.sistemedu.com",
-  // tambahkan domain frontend lain jika ada:
-  // "https://frontend-anda.com",
+  "https://www.sertif-pelatihan.sistemedu.com",
 ];
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if ($origin && in_array($origin, $allowed_origins, true)) {
+if ($origin && in_array($origin, $allowed, true)) {
   header("Access-Control-Allow-Origin: $origin");
   header("Vary: Origin");
 }
 header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type");
 
+// Preflight
 if ($_SERVER["REQUEST_METHOD"] === "OPTIONS") {
   http_response_code(204);
   exit;
@@ -31,13 +31,11 @@ if ($_SERVER["REQUEST_METHOD"] === "OPTIONS") {
 // HELPERS
 // =========================
 function respond($ok, $message, $files = [], $extra = []) {
-  $payload = array_merge([
-    "ok"      => (bool)$ok,
+  echo json_encode(array_merge([
+    "ok" => (bool)$ok,
     "message" => (string)$message,
-    "files"   => (array)$files
-  ], $extra);
-
-  echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    "files" => (array)$files
+  ], $extra), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
   exit;
 }
 
@@ -75,23 +73,22 @@ if ($_SERVER["REQUEST_METHOD"] !== "POST") {
 }
 
 // =========================
-// BASIC SERVER ENV CHECKS (cPanel)
+// CHECK shell_exec (shared hosting sering disable)
 // =========================
-if (!function_exists('shell_exec')) {
-  respond(false, "shell_exec tidak tersedia (function tidak ada). Biasanya diblok hosting.");
+if (!function_exists("shell_exec")) {
+  respond(false, "shell_exec tidak tersedia (kemungkinan diblok hosting).");
 }
-$disabled = ini_get('disable_functions') ?: '';
-if ($disabled && stripos($disabled, 'shell_exec') !== false) {
-  respond(false, "shell_exec di-disable oleh hosting: $disabled");
+$disabled = ini_get("disable_functions") ?: "";
+if ($disabled && stripos($disabled, "shell_exec") !== false) {
+  respond(false, "shell_exec di-disable oleh hosting: " . $disabled);
 }
 
 // =========================
-// PATHS
+// PATHS (sesuai struktur folder Anda)
+// base = folder /Sertif_Pelatihan
 // =========================
 $base = realpath(__DIR__ . "/..");
-if (!$base) {
-  respond(false, "Base path tidak valid.");
-}
+if (!$base) respond(false, "Base path tidak valid.");
 
 $uploadDir   = $base . DIRECTORY_SEPARATOR . "engine" . DIRECTORY_SEPARATOR . "uploads";
 $outputRoot  = $base . DIRECTORY_SEPARATOR . "engine" . DIRECTORY_SEPARATOR . "output";
@@ -101,47 +98,39 @@ $downloadDir = $base . DIRECTORY_SEPARATOR . "web" . DIRECTORY_SEPARATOR . "down
 @mkdir($outputRoot, 0777, true);
 @mkdir($downloadDir, 0777, true);
 
-if (!is_writable($uploadDir)) {
-  respond(false, "Folder uploads tidak writable: $uploadDir");
-}
-if (!is_writable($outputRoot)) {
-  respond(false, "Folder output tidak writable: $outputRoot");
-}
-if (!is_writable($downloadDir)) {
-  respond(false, "Folder download tidak writable: $downloadDir");
-}
+if (!is_writable($uploadDir))  respond(false, "uploads tidak writable: $uploadDir");
+if (!is_writable($outputRoot)) respond(false, "output tidak writable: $outputRoot");
+if (!is_writable($downloadDir))respond(false, "download tidak writable: $downloadDir");
 
 // =========================
 // FILES VALIDATION
 // =========================
-if (!isset($_FILES["data"], $_FILES["templates"])) {
+if (!isset($_FILES["templates"], $_FILES["data"])) {
   respond(false, "templates[] dan data wajib diupload.");
 }
 
 $data = $_FILES["data"];
 $templates = $_FILES["templates"];
 
-// validate data upload error
-if (!isset($data["error"]) || $data["error"] !== UPLOAD_ERR_OK) {
-  respond(false, "Upload data Excel gagal. Kode error: " . ($data["error"] ?? "unknown"));
+if (($data["error"] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+  respond(false, "Upload data Excel gagal. Kode: " . ($data["error"] ?? "unknown"));
 }
+
 if (strtolower(pathinfo($data["name"], PATHINFO_EXTENSION)) !== "xlsx") {
   respond(false, "Data harus .xlsx");
 }
 
-// validate templates
 if (!isset($templates["name"]) || !is_array($templates["name"]) || count($templates["name"]) < 1) {
   respond(false, "Minimal 1 template.");
 }
 
-// cek error templates
 for ($i = 0; $i < count($templates["name"]); $i++) {
   $err = $templates["error"][$i] ?? UPLOAD_ERR_NO_FILE;
   if ($err !== UPLOAD_ERR_OK) {
-    respond(false, "Upload template ke-" . ($i+1) . " gagal. Kode error: $err");
+    respond(false, "Upload template ke-" . ($i+1) . " gagal. Kode: $err");
   }
   $ext = strtolower(pathinfo($templates["name"][$i], PATHINFO_EXTENSION));
-  if (!in_array($ext, ["png", "jpg", "jpeg"], true)) {
+  if (!in_array($ext, ["png","jpg","jpeg"], true)) {
     respond(false, "Template harus PNG/JPG");
   }
 }
@@ -151,20 +140,17 @@ for ($i = 0; $i < count($templates["name"]); $i++) {
 // =========================
 $stamp = date("Ymd_His") . "_" . bin2hex(random_bytes(4));
 
-// simpan data
 $dataPath = $uploadDir . DIRECTORY_SEPARATOR . "data_{$stamp}.xlsx";
 if (!move_uploaded_file($data["tmp_name"], $dataPath)) {
   respond(false, "Gagal simpan data Excel.");
 }
 
-// simpan templates
 $templatePaths = [];
 for ($i = 0; $i < count($templates["name"]); $i++) {
   $ext = strtolower(pathinfo($templates["name"][$i], PATHINFO_EXTENSION));
-  $savePath = $uploadDir . DIRECTORY_SEPARATOR . "template_{$stamp}_p" . ($i + 1) . "." . $ext;
+  $savePath = $uploadDir . DIRECTORY_SEPARATOR . "template_{$stamp}_p" . ($i+1) . "." . $ext;
 
   if (!move_uploaded_file($templates["tmp_name"][$i], $savePath)) {
-    // bersihkan data yg sudah tersimpan
     @unlink($dataPath);
     foreach ($templatePaths as $tp) @unlink($tp);
     respond(false, "Gagal simpan template ke-" . ($i+1));
@@ -173,24 +159,29 @@ for ($i = 0; $i < count($templates["name"]); $i++) {
 }
 
 // =========================
-// RUN PYTHON (LINUX FRIENDLY)
+// PYTHON PATH (support .venv & venv, Linux & Windows)
 // =========================
-$pythonVenvLinux = $base . DIRECTORY_SEPARATOR . "venv" . DIRECTORY_SEPARATOR . "bin" . DIRECTORY_SEPARATOR . "python";
-$pythonVenvWin   = $base . DIRECTORY_SEPARATOR . "venv" . DIRECTORY_SEPARATOR . "Scripts" . DIRECTORY_SEPARATOR . "python.exe";
+$pythonCandidates = [
+  $base . DIRECTORY_SEPARATOR . ".venv" . DIRECTORY_SEPARATOR . "bin" . DIRECTORY_SEPARATOR . "python",      // Linux .venv
+  $base . DIRECTORY_SEPARATOR . "venv"  . DIRECTORY_SEPARATOR . "bin" . DIRECTORY_SEPARATOR . "python",      // Linux venv
+  $base . DIRECTORY_SEPARATOR . ".venv" . DIRECTORY_SEPARATOR . "Scripts" . DIRECTORY_SEPARATOR . "python.exe", // Windows .venv
+  $base . DIRECTORY_SEPARATOR . "venv"  . DIRECTORY_SEPARATOR . "Scripts" . DIRECTORY_SEPARATOR . "python.exe", // Windows venv
+  "python3",
+  "python",
+];
 
-if (file_exists($pythonVenvLinux)) {
-  $python = $pythonVenvLinux;
-} elseif (file_exists($pythonVenvWin)) {
-  $python = $pythonVenvWin;
-} else {
-  $python = "python3"; // fallback di cPanel umumnya python3
+$python = null;
+foreach ($pythonCandidates as $cand) {
+  if ($cand === "python3" || $cand === "python") { $python = $cand; break; }
+  if (file_exists($cand)) { $python = $cand; break; }
 }
+if (!$python) $python = "python3";
 
 $script = $base . DIRECTORY_SEPARATOR . "engine" . DIRECTORY_SEPARATOR . "generate.py";
 if (!file_exists($script)) {
   @unlink($dataPath);
   foreach ($templatePaths as $tp) @unlink($tp);
-  respond(false, "Script generate.py tidak ditemukan: $script");
+  respond(false, "generate.py tidak ditemukan: $script");
 }
 
 $jobOutDir = $outputRoot . DIRECTORY_SEPARATOR . "job_" . $stamp;
@@ -206,11 +197,10 @@ $cmd =
   " --outdir " . escapeshellarg($jobOutDir) .
   " 2>&1";
 
-// Ambil output untuk debugging
 $out = shell_exec($cmd);
 
 // =========================
-// COLLECT OUTPUT PDF
+// COLLECT PDF
 // =========================
 $pdfs = glob($jobOutDir . DIRECTORY_SEPARATOR . "*.pdf");
 if (!$pdfs) {
@@ -218,20 +208,19 @@ if (!$pdfs) {
   @unlink($dataPath);
   foreach ($templatePaths as $tp) @unlink($tp);
 
-  // kirim output python biar kelihatan errornya
   respond(false, "Tidak ada PDF dihasilkan.", [], [
     "debug" => [
+      "python" => $python,
       "cmd" => $cmd,
       "python_output" => trim((string)$out),
-      "jobOutDir" => $jobOutDir,
+      "jobOutDir" => $jobOutDir
     ]
   ]);
 }
 
-// copy PDF ke publik
+// copy pdf ke publik
 $pdfLinks = [];
 $pdfPublicAbs = [];
-
 foreach ($pdfs as $p) {
   $cleanName = basename($p);
   $dest = $downloadDir . DIRECTORY_SEPARATOR . $cleanName;
@@ -242,7 +231,7 @@ foreach ($pdfs as $p) {
   $pdfPublicAbs[] = $dest;
 }
 
-// buat ZIP
+// zip
 $zipName = "SERTIFIKAT_" . $stamp . ".zip";
 $zipAbs  = $downloadDir . DIRECTORY_SEPARATOR . $zipName;
 $zipLink = "/Sertif_Pelatihan/web/download/" . $zipName;
@@ -253,18 +242,20 @@ try {
   rrmdir($jobOutDir);
   @unlink($dataPath);
   foreach ($templatePaths as $tp) @unlink($tp);
+
   respond(false, "Gagal membuat ZIP: " . $e->getMessage(), [], [
     "debug" => [
+      "python" => $python,
       "cmd" => $cmd,
       "python_output" => trim((string)$out),
     ]
   ]);
 }
 
-// bersihkan internal
+// cleanup internal
 rrmdir($jobOutDir);
 @unlink($dataPath);
 foreach ($templatePaths as $tp) @unlink($tp);
 
-// response (ZIP dulu, lalu PDF)
+// response
 respond(true, "Selesai generate.", array_merge([$zipLink], $pdfLinks));
