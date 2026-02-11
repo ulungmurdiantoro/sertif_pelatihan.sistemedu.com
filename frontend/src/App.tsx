@@ -3,6 +3,10 @@ import "./App.css";
 
 const BASE_PATH = location.pathname.split("/").slice(0, 2).join("/"); 
 // contoh: "/Sertif_Pelatihan"
+const APACHE_BASE =
+  location.hostname === "localhost"
+    ? "http://localhost"
+    : "";
 
 const API_URL =
   location.hostname === "localhost"
