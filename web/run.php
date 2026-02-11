@@ -66,7 +66,7 @@ register_shutdown_function(function() {
 // =========================
 $allowed = ["http://localhost:5173"];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if ($origin && in_array($origin, $allowed, true)) {
+if ($origin) {
   header("Access-Control-Allow-Origin: $origin");
   header("Vary: Origin");
 }
