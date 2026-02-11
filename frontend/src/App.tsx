@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import "./App.css";
 
-const API_URL = "https://sertif-pelatihan.sistemedu.com/web/run.php";
-const APACHE_BASE = "https://sertif-pelatihan.sistemedu.com";
+const API_URL = "/web/run.php";
+const APACHE_BASE = "";
 
 type FileWithPreview = File & { __preview?: string };
 

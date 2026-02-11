@@ -9,8 +9,8 @@ header('Content-Type: application/json; charset=utf-8');
 // =========================
 $allowed = [
   "http://localhost:5173",
-  "https://sertif-pelatihan.sistemedu.com",
-  "https://www.sertif-pelatihan.sistemedu.com",
+  "https://sertif.mutuperguruantinggi.id",
+  "https://www.sertif.mutuperguruantinggi.id",
 ];
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -84,8 +84,8 @@ if ($disabled && stripos($disabled, "shell_exec") !== false) {
 }
 
 // =========================
-// PATHS (sesuai struktur folder Anda)
-// base = folder /Sertif_Pelatihan
+// PATHS
+// base = public_html (karena file ada di public_html/web/run.php)
 // =========================
 $base = realpath(__DIR__ . "/..");
 if (!$base) respond(false, "Base path tidak valid.");
@@ -98,9 +98,9 @@ $downloadDir = $base . DIRECTORY_SEPARATOR . "web" . DIRECTORY_SEPARATOR . "down
 @mkdir($outputRoot, 0777, true);
 @mkdir($downloadDir, 0777, true);
 
-if (!is_writable($uploadDir))  respond(false, "uploads tidak writable: $uploadDir");
-if (!is_writable($outputRoot)) respond(false, "output tidak writable: $outputRoot");
-if (!is_writable($downloadDir))respond(false, "download tidak writable: $downloadDir");
+if (!is_writable($uploadDir))   respond(false, "uploads tidak writable: $uploadDir");
+if (!is_writable($outputRoot))  respond(false, "output tidak writable: $outputRoot");
+if (!is_writable($downloadDir)) respond(false, "download tidak writable: $downloadDir");
 
 // =========================
 // FILES VALIDATION
@@ -140,11 +140,13 @@ for ($i = 0; $i < count($templates["name"]); $i++) {
 // =========================
 $stamp = date("Ymd_His") . "_" . bin2hex(random_bytes(4));
 
+// simpan data
 $dataPath = $uploadDir . DIRECTORY_SEPARATOR . "data_{$stamp}.xlsx";
 if (!move_uploaded_file($data["tmp_name"], $dataPath)) {
   respond(false, "Gagal simpan data Excel.");
 }
 
+// simpan templates
 $templatePaths = [];
 for ($i = 0; $i < count($templates["name"]); $i++) {
   $ext = strtolower(pathinfo($templates["name"][$i], PATHINFO_EXTENSION));
@@ -162,10 +164,10 @@ for ($i = 0; $i < count($templates["name"]); $i++) {
 // PYTHON PATH (support .venv & venv, Linux & Windows)
 // =========================
 $pythonCandidates = [
-  $base . DIRECTORY_SEPARATOR . ".venv" . DIRECTORY_SEPARATOR . "bin" . DIRECTORY_SEPARATOR . "python",      // Linux .venv
-  $base . DIRECTORY_SEPARATOR . "venv"  . DIRECTORY_SEPARATOR . "bin" . DIRECTORY_SEPARATOR . "python",      // Linux venv
-  $base . DIRECTORY_SEPARATOR . ".venv" . DIRECTORY_SEPARATOR . "Scripts" . DIRECTORY_SEPARATOR . "python.exe", // Windows .venv
-  $base . DIRECTORY_SEPARATOR . "venv"  . DIRECTORY_SEPARATOR . "Scripts" . DIRECTORY_SEPARATOR . "python.exe", // Windows venv
+  $base . DIRECTORY_SEPARATOR . ".venv" . DIRECTORY_SEPARATOR . "bin" . DIRECTORY_SEPARATOR . "python",
+  $base . DIRECTORY_SEPARATOR . "venv"  . DIRECTORY_SEPARATOR . "bin" . DIRECTORY_SEPARATOR . "python",
+  $base . DIRECTORY_SEPARATOR . ".venv" . DIRECTORY_SEPARATOR . "Scripts" . DIRECTORY_SEPARATOR . "python.exe",
+  $base . DIRECTORY_SEPARATOR . "venv"  . DIRECTORY_SEPARATOR . "Scripts" . DIRECTORY_SEPARATOR . "python.exe",
   "python3",
   "python",
 ];
@@ -227,14 +229,17 @@ foreach ($pdfs as $p) {
 
   @copy($p, $dest);
 
-  $pdfLinks[] = "/Sertif_Pelatihan/web/download/" . $cleanName;
+  // ✅ link tanpa /Sertif_Pelatihan
+  $pdfLinks[] = "/web/download/" . $cleanName;
   $pdfPublicAbs[] = $dest;
 }
 
 // zip
 $zipName = "SERTIFIKAT_" . $stamp . ".zip";
 $zipAbs  = $downloadDir . DIRECTORY_SEPARATOR . $zipName;
-$zipLink = "/Sertif_Pelatihan/web/download/" . $zipName;
+
+// ✅ link tanpa /Sertif_Pelatihan
+$zipLink = "/web/download/" . $zipName;
 
 try {
   make_zip($zipAbs, $pdfPublicAbs);
@@ -257,5 +262,5 @@ rrmdir($jobOutDir);
 @unlink($dataPath);
 foreach ($templatePaths as $tp) @unlink($tp);
 
-// response
+// response (ZIP dulu, lalu PDF)
 respond(true, "Selesai generate.", array_merge([$zipLink], $pdfLinks));
