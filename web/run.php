@@ -9,8 +9,8 @@ header('Content-Type: application/json; charset=utf-8');
 // =========================
 $allowed = [
   "http://localhost:5173",
-  "https://sertif.mutuperguruantinggi.id",
-  "https://www.sertif.mutuperguruantinggi.id",
+  "https://sertif-pelatihan.sistemedu.com",
+  "https://www.sertif-pelatihan.sistemedu.com",
 ];
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
