@@ -5,13 +5,10 @@ ini_set('display_errors', 1);
 header('Content-Type: application/json; charset=utf-8');
 
 // =========================
-// CORS (LOCAL + PROD)
+// CORS (LOCAL)
 // =========================
 $allowed = [
   "http://localhost:5173",
-  "https://sertif.mutuperguruantinggi.id",
-  "https://www.sertif.mutuperguruantinggi.id",
-  "https://sertif-pelatihan.sistemedu.com",
 ];
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -66,14 +63,14 @@ function make_zip($zipPath, $filesAbs) {
 }
 
 /**
- * Jalankan command dengan timeout (menghindari hang 5+ menit tanpa selesai).
+ * Run command with timeout (avoid hanging)
  * Return: [exitCode, output, timedOut]
  */
 function run_cmd_with_timeout($cmd, $timeoutSeconds = 180) {
   $descriptorspec = [
-    0 => ["pipe", "r"], // stdin
-    1 => ["pipe", "w"], // stdout
-    2 => ["pipe", "w"], // stderr
+    0 => ["pipe", "r"],
+    1 => ["pipe", "w"],
+    2 => ["pipe", "w"],
   ];
 
   $process = proc_open($cmd, $descriptorspec, $pipes);
@@ -96,24 +93,18 @@ function run_cmd_with_timeout($cmd, $timeoutSeconds = 180) {
     $output .= stream_get_contents($pipes[1]);
     $output .= stream_get_contents($pipes[2]);
 
-    if (!$running) {
-      break;
-    }
+    if (!$running) break;
 
     if ((time() - $start) > $timeoutSeconds) {
       $timedOut = true;
-      // coba terminate halus
       proc_terminate($process);
-      sleep(1);
-      // kalau masih hidup, paksa
+      usleep(300000);
       $status2 = proc_get_status($process);
-      if ($status2["running"]) {
-        proc_terminate($process, 9);
-      }
+      if ($status2["running"]) proc_terminate($process, 9);
       break;
     }
 
-    usleep(120000); // 0.12s
+    usleep(120000);
   }
 
   $output .= stream_get_contents($pipes[1]);
@@ -134,18 +125,7 @@ if ($_SERVER["REQUEST_METHOD"] !== "POST") {
 }
 
 // =========================
-// CHECK command execution availability
-// =========================
-if (!function_exists("proc_open")) {
-  respond(false, "proc_open tidak tersedia (kemungkinan diblok hosting).");
-}
-$disabled = ini_get("disable_functions") ?: "";
-if ($disabled && (stripos($disabled, "proc_open") !== false || stripos($disabled, "proc_terminate") !== false)) {
-  respond(false, "proc_open/proc_terminate di-disable oleh hosting: " . $disabled);
-}
-
-// =========================
-// PATHS (base = public_html)
+// PATHS (base = Sertif_Pelatihan)
 // =========================
 $base = realpath(__DIR__ . "/..");
 if (!$base) respond(false, "Base path tidak valid.");
@@ -218,21 +198,30 @@ for ($i = 0; $i < count($templates["name"]); $i++) {
 }
 
 // =========================
-// PYTHON PATH
+// PYTHON PATH (Windows first)
 // =========================
 $pythonCandidates = [
+  // Windows venv
+  $base . DIRECTORY_SEPARATOR . ".venv" . DIRECTORY_SEPARATOR . "Scripts" . DIRECTORY_SEPARATOR . "python.exe",
+  $base . DIRECTORY_SEPARATOR . "venv"  . DIRECTORY_SEPARATOR . "Scripts" . DIRECTORY_SEPARATOR . "python.exe",
+
+  // Linux venv
   $base . DIRECTORY_SEPARATOR . ".venv" . DIRECTORY_SEPARATOR . "bin" . DIRECTORY_SEPARATOR . "python",
   $base . DIRECTORY_SEPARATOR . "venv"  . DIRECTORY_SEPARATOR . "bin" . DIRECTORY_SEPARATOR . "python",
-  "python3",
+
+  // System python (Windows)
   "python",
+
+  // System python (Linux)
+  "python3",
 ];
 
 $python = null;
 foreach ($pythonCandidates as $cand) {
-  if ($cand === "python3" || $cand === "python") { $python = $cand; break; }
+  if ($cand === "python" || $cand === "python3") { $python = $cand; break; }
   if (file_exists($cand)) { $python = $cand; break; }
 }
-if (!$python) $python = "python3";
+if (!$python) $python = "python";
 
 $script = $base . DIRECTORY_SEPARATOR . "engine" . DIRECTORY_SEPARATOR . "generate.py";
 if (!file_exists($script)) {
@@ -244,7 +233,6 @@ if (!file_exists($script)) {
 $jobOutDir = $outputRoot . DIRECTORY_SEPARATOR . "job_" . $stamp;
 @mkdir($jobOutDir, 0777, true);
 
-// log file untuk cek progress server-side
 $logFile = $jobOutDir . DIRECTORY_SEPARATOR . "run.log";
 
 $tplArg = implode("|", $templatePaths);
@@ -259,48 +247,36 @@ $cmd =
 file_put_contents($logFile, "CMD:\n$cmd\n\n", FILE_APPEND);
 
 // =========================
-// RUN PYTHON with TIMEOUT
+// RUN PYTHON
 // =========================
-$timeoutSeconds = 180; // 3 menit (ubah sesuai kebutuhan)
+$timeoutSeconds = 180;
 $fullCmd = $cmd . " 2>&1";
-
 list($exitCode, $out, $timedOut) = run_cmd_with_timeout($fullCmd, $timeoutSeconds);
 
-file_put_contents($logFile, "EXIT_CODE: $exitCode\nTIMED_OUT: " . ($timedOut ? "YES" : "NO") . "\n\nOUTPUT:\n$out\n", FILE_APPEND);
+file_put_contents(
+  $logFile,
+  "EXIT_CODE: $exitCode\nTIMED_OUT: " . ($timedOut ? "YES" : "NO") . "\n\nOUTPUT:\n$out\n",
+  FILE_APPEND
+);
 
-// =========================
-// COLLECT PDF
-// =========================
+$allFiles = glob($jobOutDir . DIRECTORY_SEPARATOR . "*");
+$allNames = $allFiles ? array_map("basename", $allFiles) : [];
+
 $pdfs = glob($jobOutDir . DIRECTORY_SEPARATOR . "*.pdf");
 if (!$pdfs) {
-  // bersihkan upload (biar tidak numpuk)
   @unlink($dataPath);
   foreach ($templatePaths as $tp) @unlink($tp);
 
-  // kalau timeout, kasih pesan jelas
-  if ($timedOut) {
-    respond(false, "Proses Python timeout > {$timeoutSeconds}s (hosting lambat/terbatas).", [], [
-      "debug" => [
-        "python" => $python,
-        "cmd" => $cmd,
-        "exitCode" => $exitCode,
-        "timedOut" => true,
-        "python_output" => trim((string)$out),
-        "logFile" => $logFile,
-        "jobOutDir" => $jobOutDir
-      ]
-    ]);
-  }
-
-  respond(false, "Tidak ada PDF dihasilkan.", [], [
+  respond(false, $timedOut ? "Proses Python timeout > {$timeoutSeconds}s." : "Tidak ada PDF dihasilkan.", [], [
     "debug" => [
       "python" => $python,
       "cmd" => $cmd,
       "exitCode" => $exitCode,
-      "timedOut" => false,
+      "timedOut" => $timedOut,
       "python_output" => trim((string)$out),
+      "jobOutDir" => $jobOutDir,
       "logFile" => $logFile,
-      "jobOutDir" => $jobOutDir
+      "outdir_files" => $allNames,
     ]
   ]);
 }
@@ -313,14 +289,15 @@ foreach ($pdfs as $p) {
   $dest = $downloadDir . DIRECTORY_SEPARATOR . $cleanName;
   @copy($p, $dest);
 
-  $pdfLinks[] = "/web/download/" . $cleanName;
+  // Local URL (XAMPP)
+  $pdfLinks[] = "/Sertif_Pelatihan/web/download/" . $cleanName;
   $pdfPublicAbs[] = $dest;
 }
 
 // zip
 $zipName = "SERTIFIKAT_" . $stamp . ".zip";
 $zipAbs  = $downloadDir . DIRECTORY_SEPARATOR . $zipName;
-$zipLink = "/web/download/" . $zipName;
+$zipLink = "/Sertif_Pelatihan/web/download/" . $zipName;
 
 try {
   make_zip($zipAbs, $pdfPublicAbs);
@@ -333,23 +310,22 @@ try {
       "python" => $python,
       "cmd" => $cmd,
       "python_output" => trim((string)$out),
+      "jobOutDir" => $jobOutDir,
       "logFile" => $logFile,
+      "outdir_files" => $allNames,
     ]
   ]);
 }
 
-// cleanup uploads (output job folder biarkan dulu untuk log, kalau mau bersihkan silakan rrmdir)
+// cleanup uploads
 @unlink($dataPath);
 foreach ($templatePaths as $tp) @unlink($tp);
 
-// OPTIONAL: kalau mau hemat storage, boleh hapus job dir (tapi log juga hilang)
-// rrmdir($jobOutDir);
-
-// response
 respond(true, "Selesai generate.", array_merge([$zipLink], $pdfLinks), [
   "debug" => [
     "exitCode" => $exitCode,
     "timedOut" => $timedOut,
+    "python" => $python,
     "logFile" => $logFile
   ]
 ]);

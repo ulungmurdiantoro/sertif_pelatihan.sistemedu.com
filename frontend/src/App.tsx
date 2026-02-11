@@ -1,8 +1,15 @@
 import { useMemo, useState } from "react";
 import "./App.css";
 
-const API_URL = "/web/run.php";
-const APACHE_BASE = "";
+const API_URL =
+  location.hostname === "localhost"
+    ? "http://localhost/Sertif_Pelatihan/web/run.php"
+    : "/web/run.php";
+
+const APACHE_BASE =
+  location.hostname === "localhost"
+    ? "http://localhost"
+    : "";
 
 type FileWithPreview = File & { __preview?: string };
 
@@ -29,6 +36,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [ok, setOk] = useState<boolean | null>(null);
   const [files, setFiles] = useState<string[]>([]);
+  const [debug, setDebug] = useState<any>(null);
 
   const canSubmit = useMemo(
     () => templates.length > 0 && !!data && !loading,
@@ -44,6 +52,7 @@ export default function App() {
     setMessage("");
     setFiles([]);
     setOk(null);
+    setDebug(null);
   };
 
   const addTemplates = (incoming: File[]) => {
@@ -138,26 +147,26 @@ export default function App() {
 
       const res = await fetch(API_URL, { method: "POST", body: form });
 
-      // ambil text dulu supaya kalau HTML error page, kita bisa tampilkan
       const text = await res.text();
-
       let json: any;
+
       try {
         json = JSON.parse(text);
       } catch {
         throw new Error(
-          `Server tidak mengembalikan JSON. HTTP ${res.status}\n` +
-            `Body (potongan):\n${text.slice(0, 400)}`
+          `Server tidak mengembalikan JSON. HTTP ${res.status}\nBody (potongan):\n${text.slice(0, 400)}`
         );
       }
 
       setOk(!!json.ok);
       setMessage(json.message || (json.ok ? "Sukses." : "Gagal."));
       setFiles(Array.isArray(json.files) ? json.files : []);
+      setDebug(json.debug ?? null);
+
       setProgress(100);
     } catch (e: any) {
       setOk(false);
-      setMessage(e?.message || "Gagal memproses. Pastikan run.php bisa diakses.");
+      setMessage(e?.message || "Gagal memproses.");
       setProgress(100);
     } finally {
       clearInterval(timer);
@@ -175,14 +184,14 @@ export default function App() {
       <div className="shell">
         <header className="header">
           <div>
-            <div className="kicker">Local Tool</div>
+            <div className="kicker">Tool</div>
             <h1 className="title">PDF Generator</h1>
             <p className="subtitle">
-              Upload <b>template (PNG/JPG)</b> untuk multi-halaman & <b>data peserta (.xlsx)</b>, lalu generate PDF otomatis.
+              Upload <b>template (PNG/JPG)</b> & <b>data peserta (.xlsx)</b>, lalu generate PDF otomatis.
             </p>
           </div>
           <div className="env">
-            <span className="pill">LOCAL</span>
+            <span className="pill">{location.hostname === "localhost" ? "LOCAL" : "PROD"}</span>
           </div>
         </header>
 
@@ -191,14 +200,14 @@ export default function App() {
             <div className="dot">1</div>
             <div>
               <div className="stepTitle">Template</div>
-              <div className="stepDesc">Tambahkan 1+ gambar (per halaman)</div>
+              <div className="stepDesc">Tambah 1+ gambar (per halaman)</div>
             </div>
           </div>
           <div className={`step ${step2Done ? "done" : ""}`}>
             <div className="dot">2</div>
             <div>
               <div className="stepTitle">Data Excel</div>
-              <div className="stepDesc">Upload file .xlsx peserta</div>
+              <div className="stepDesc">Upload file .xlsx</div>
             </div>
           </div>
           <div className={`step ${step3Done ? "done" : ""}`}>
@@ -231,7 +240,7 @@ export default function App() {
                       <span className="badge soft">Total: {formatBytes(totalTemplateSize)}</span>
                     </>
                   ) : (
-                    <span className="muted">Tips: drag & drop untuk cepat</span>
+                    <span className="muted">Tips: drag & drop</span>
                   )}
                 </div>
               </div>
@@ -244,13 +253,7 @@ export default function App() {
                 )}
                 <label className="btnSmall">
                   Pilih file
-                  <input
-                    className="hiddenInput"
-                    type="file"
-                    accept=".png,.jpg,.jpeg"
-                    multiple
-                    onChange={onPickTemplates}
-                  />
+                  <input className="hiddenInput" type="file" accept=".png,.jpg,.jpeg" multiple onChange={onPickTemplates} />
                 </label>
               </div>
             </div>
@@ -260,7 +263,7 @@ export default function App() {
                 <div className="emptyIcon">🖼️</div>
                 <div className="emptyText">
                   <div className="emptyTitle">Drop template di sini</div>
-                  <div className="emptySub">1 template = 1 halaman, 2 template = 2 halaman, dst.</div>
+                  <div className="emptySub">1 template = 1 halaman</div>
                 </div>
               </div>
             ) : (
@@ -279,12 +282,7 @@ export default function App() {
                       <div className="thumbMeta">{formatBytes(f.size)}</div>
                     </div>
 
-                    <button
-                      className="thumbRemove"
-                      type="button"
-                      onClick={() => removeTemplateAt(i)}
-                      aria-label="hapus"
-                    >
+                    <button className="thumbRemove" type="button" onClick={() => removeTemplateAt(i)} aria-label="hapus">
                       ×
                     </button>
                   </div>
@@ -313,7 +311,7 @@ export default function App() {
                       <span className="badge soft">{formatBytes(data.size)}</span>
                     </>
                   ) : (
-                    <span className="muted">Minimal kolom: nama (opsional: instansi, nomor)</span>
+                    <span className="muted">Pastikan format .xlsx</span>
                   )}
                 </div>
               </div>
@@ -336,7 +334,7 @@ export default function App() {
                 <div className="emptyIcon">📄</div>
                 <div className="emptyText">
                   <div className="emptyTitle">Drop file Excel di sini</div>
-                  <div className="emptySub">Pastikan format .xlsx</div>
+                  <div className="emptySub">format .xlsx</div>
                 </div>
               </div>
             ) : (
@@ -378,6 +376,26 @@ export default function App() {
 
         {message && <div className={`toast ${ok ? "ok" : "err"}`}>{message}</div>}
 
+        {/* DEBUG BOX */}
+        {debug && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Debug</div>
+            <pre
+              style={{
+                whiteSpace: "pre-wrap",
+                background: "#111",
+                color: "#0f0",
+                padding: 12,
+                borderRadius: 12,
+                fontSize: 12,
+                lineHeight: 1.35,
+              }}
+            >
+              {JSON.stringify(debug, null, 2)}
+            </pre>
+          </div>
+        )}
+
         {files.length > 0 && (
           <section className="resultCard">
             <div className="resultHead">
@@ -404,16 +422,6 @@ export default function App() {
             </ul>
           </section>
         )}
-
-        <footer className="footer">
-          <div className="footerBox">
-            <div className="footerTitle">Format Data</div>
-            <div className="footerText">
-              Excel minimal punya kolom <code>nama</code>. Opsional: <code>instansi</code>, <code>nomor</code>. Jumlah halaman
-              PDF mengikuti jumlah template.
-            </div>
-          </div>
-        </footer>
       </div>
     </div>
   );
