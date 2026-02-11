@@ -1,9 +1,6 @@
 import { useMemo, useState } from "react";
 import "./App.css";
 
-const BASE_PATH = location.pathname.split("/").slice(0, 2).join("/"); 
-// contoh: "/Sertif_Pelatihan"
-
 const API_URL =
   location.hostname === "localhost"
     ? "http://localhost/Sertif_Pelatihan/web/run.php"
