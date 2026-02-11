@@ -276,11 +276,15 @@ if (!$rows) {
 // PDF GENERATOR (mPDF) - FIX strict font access
 // =========================
 function generate_pdfs_mpdf(string $base, array $templatesAbs, array $rows, string $outDirAbs): array {
-  // A4 Landscape mm
-  $pageW = 297.0;
-  $pageH = 210.0;
+  // Base size A4 PORTRAIT (mm) — biar mPDF tidak double-rotate
+  $baseW = 210.0;
+  $baseH = 297.0;
 
-  // posisi (dari generate.py)
+  // Real page size setelah landscape (mm)
+  $landW = 297.0;
+  $landH = 210.0;
+
+  // posisi (dari generate.py) -> hasil mm
   $NOMOR_LEFT_MM   = pt_to_mm(74);
   $NOMOR_TOP_MM    = pt_to_mm(87);
   $NOMOR_BOTTOM_MM = pt_to_mm(32);
@@ -304,8 +308,7 @@ function generate_pdfs_mpdf(string $base, array $templatesAbs, array $rows, stri
   $tmpDir = $base . DIRECTORY_SEPARATOR . "engine" . DIRECTORY_SEPARATOR . "tmp_mpdf";
   @mkdir($tmpDir, 0777, true);
 
-  // mPDF config: set fontDir & fontdata DI CONSTRUCTOR (tanpa akses property)
-  $customFontDir = dirname($fontNamaPath); // same dir
+  $customFontDir  = dirname($fontNamaPath);
   $customFontDir2 = dirname($fontInfoPath);
 
   $generated = [];
@@ -316,26 +319,22 @@ function generate_pdfs_mpdf(string $base, array $templatesAbs, array $rows, stri
     if ($nama === "") continue;
 
     $instansi = trim((string)($row["instansi"] ?? ""));
-    $nomor = trim((string)($row["nomor"] ?? ""));
+    $nomor    = trim((string)($row["nomor"] ?? ""));
 
     $outPath = $outDirAbs . DIRECTORY_SEPARATOR . "SERTIFIKAT_" . sanitize_filename($nama) . ".pdf";
 
-    // Pakai default fontdir mPDF lewat constant, lalu tambah custom dir
-    $mpdf = new Mpdf([
+    // ✅ format = PORTRAIT, landscape dipaksa via AddPageByArray
+    $mpdf = new \Mpdf\Mpdf([
       "mode" => "utf-8",
-      "format" => [$pageW, $pageH],
-      "orientation" => "L",
+      "format" => [$baseW, $baseH],   // <-- penting
+      "orientation" => "P",           // <-- penting
       "margin_left" => 0,
       "margin_right" => 0,
       "margin_top" => 0,
       "margin_bottom" => 0,
       "tempDir" => $tmpDir,
 
-      // ✅ FIX strict: set font dir & fontdata via config
-      "fontDir" => array_values(array_unique([
-        $customFontDir,
-        $customFontDir2,
-      ])),
+      "fontDir" => array_values(array_unique([$customFontDir, $customFontDir2])),
       "fontdata" => [
         "font_nama" => ["R" => basename($fontNamaPath)],
         "font_info" => ["R" => basename($fontInfoPath)],
@@ -343,25 +342,37 @@ function generate_pdfs_mpdf(string $base, array $templatesAbs, array $rows, stri
       "default_font" => "font_info",
     ]);
 
+    // hapus halaman default
+    $mpdf->DeletePages(1);
+
     $mpdf->SetDefaultBodyCSS("margin", "0");
     $mpdf->SetDefaultBodyCSS("padding", "0");
 
     foreach ($templatesAbs as $idx => $tplAbs) {
-      if ($idx > 0) $mpdf->AddPage();
+      // ✅ paksa LANDSCAPE per halaman
+      $mpdf->AddPageByArray([
+        "orientation"   => "L",
+        "sheet-size"    => [$baseW, $baseH], // base portrait, orientasi L yang memutar
+        "margin-left"   => 0,
+        "margin-right"  => 0,
+        "margin-top"    => 0,
+        "margin-bottom" => 0,
+      ]);
 
-      // background full page
-      $bg = "
-        <div style='position:fixed; left:0; top:0; width:{$pageW}mm; height:{$pageH}mm; z-index:-1;'>
-          <img src='{$tplAbs}' style='width:{$pageW}mm; height:{$pageH}mm;' />
+      // background full page (pakai ukuran LANDSCAPE NYATA)
+      $mpdf->WriteHTML("
+        <div style='position:fixed; left:0; top:0; width:{$landW}mm; height:{$landH}mm; z-index:-1;'>
+          <img src='{$tplAbs}' style='width:{$landW}mm; height:{$landH}mm;' />
         </div>
-      ";
-      $mpdf->WriteHTML($bg);
+      ");
 
-      // NOMOR semua halaman
+      // NOMOR semua halaman (koordinat top dihitung di landscape)
       if ($nomor !== "") {
+        $NOMOR_UP_MM = 4.0; // ubah sesuai kebutuhan (5-15mm)
         $yNomor = ($NOMOR_ANCHOR === "BOTTOM_LEFT")
-          ? ($pageH - $NOMOR_BOTTOM_MM)
-          : $NOMOR_TOP_MM;
+          ? ($landH - $NOMOR_BOTTOM_MM)
+          : max(0, $NOMOR_TOP_MM - $NOMOR_UP_MM);
+
 
         $mpdf->WriteHTML("
           <div style='position:fixed; left:{$NOMOR_LEFT_MM}mm; top:{$yNomor}mm; font-family:font_info; font-size:{$NOMOR_FONT_PT}pt;'>
@@ -370,24 +381,25 @@ function generate_pdfs_mpdf(string $base, array $templatesAbs, array $rows, stri
         ");
       }
 
-      // NAMA + INSTANSI hanya halaman 1
+      // NAMA + INSTANSI hanya halaman 1 (pakai tinggi landscape)
       if ($idx === 0) {
-        $namaFromBottom = ($pageH * $NAMA_Y_RATIO) + $NAMA_Y_OFFSET_MM;
-        $namaTop = $pageH - $namaFromBottom;
+        $NAMA_UP_MM = 12.0; // ubah sesuai kebutuhan (3-12mm)
+        $namaFromBottom = ($landH * $NAMA_Y_RATIO) + $NAMA_Y_OFFSET_MM;
+        $namaTop = max(0, ($landH - $namaFromBottom) - $NAMA_UP_MM);
 
         $mpdf->WriteHTML("
-          <div style='position:fixed; left:0; top:{$namaTop}mm; width:{$pageW}mm; text-align:center;
+          <div style='position:fixed; left:0; top:{$namaTop}mm; width:{$landW}mm; text-align:center;
                       font-family:font_nama; font-size:{$NAMA_FONT_PT}pt;'>
             " . htmlspecialchars($nama, ENT_QUOTES, 'UTF-8') . "
           </div>
         ");
 
         if ($instansi !== "") {
-          $instFromBottom = ($pageH * $INST_Y_RATIO) + $INST_Y_OFFSET_MM;
-          $instTop = $pageH - $instFromBottom;
+          $instFromBottom = ($landH * $INST_Y_RATIO) + $INST_Y_OFFSET_MM;
+          $instTop = $landH - $instFromBottom;
 
           $mpdf->WriteHTML("
-            <div style='position:fixed; left:0; top:{$instTop}mm; width:{$pageW}mm; text-align:center;
+            <div style='position:fixed; left:0; top:{$instTop}mm; width:{$landW}mm; text-align:center;
                         font-family:font_info; font-size:{$INST_FONT_PT}pt;'>
               " . htmlspecialchars($instansi, ENT_QUOTES, 'UTF-8') . "
             </div>
@@ -402,6 +414,7 @@ function generate_pdfs_mpdf(string $base, array $templatesAbs, array $rows, stri
 
   return $generated;
 }
+
 
 // =========================
 // RUN GENERATE
