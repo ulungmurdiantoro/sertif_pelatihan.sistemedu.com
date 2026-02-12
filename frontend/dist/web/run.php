@@ -266,7 +266,7 @@ function generate_pdfs_mpdf(string $base, array $templatesAbs, array $rows, stri
   $NOMOR_ANCHOR = "TOP_LEFT"; // TOP_LEFT / BOTTOM_LEFT
 
   $NAMA_Y_RATIO = 0.50;
-  $NAMA_Y_OFFSET_MM = pt_to_mm(5) + 8;
+  $NAMA_Y_OFFSET_MM = pt_to_mm(5) + 10;
   $NAMA_FONT_PT = 30;
 
   $INST_Y_RATIO = 0.44;
