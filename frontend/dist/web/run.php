@@ -306,29 +306,23 @@ function generate_pdfs_mpdf(string $base, array $templatesAbs, array $rows, stri
     $outPath = $outDirAbs . DIRECTORY_SEPARATOR . "SERTIFIKAT_" . sanitize_filename($nama) . ".pdf";
 
     $mpdf = new Mpdf([
-      "mode" => "utf-8",
-      "format" => [$pageW, $pageH],
-      "orientation" => "L",
-      "margin_left" => 0,
-      "margin_right" => 0,
-      "margin_top" => 0,
-      "margin_bottom" => 0,
-      "tempDir" => $tmpDir,
-      "fontDir" => $fontDir,
-      "fontdata" => $fontData,
-      "default_font" => "font_info",
-    ]);
+    "mode" => "utf-8",
+    "format" => "A4-L",      // ✅ FIX: langsung landscape
+    "margin_left" => 0,
+    "margin_right" => 0,
+    "margin_top" => 0,
+    "margin_bottom" => 0,
+    "tempDir" => $tmpDir,
+    "fontDir" => $fontDir,
+    "fontdata" => $fontData,
+    "default_font" => "font_info",
+  ]);
 
     $mpdf->SetDisplayMode('fullpage');
 
     foreach ($templatesAbs as $idx => $tplAbs) {
-      $mpdf->AddPageByArray([
-        'orientation' => 'L',
-        'margin-left' => 0,
-        'margin-right' => 0,
-        'margin-top' => 0,
-        'margin-bottom' => 0,
-      ]);
+      $mpdf->AddPage('L'); // atau bahkan tidak perlu AddPageByArray
+
 
       // background full page
       $tplEsc = str_replace("'", "\\'", $tplAbs);
