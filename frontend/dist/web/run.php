@@ -260,13 +260,13 @@ function generate_pdfs_mpdf(string $base, array $templatesAbs, array $rows, stri
 
   // Positions from generate.py (converted pt -> mm)
   $NOMOR_LEFT_MM   = pt_to_mm(74);
-  $NOMOR_TOP_MM    = pt_to_mm(87);
+  $NOMOR_TOP_MM    = pt_to_mm(87) - 5;
   $NOMOR_BOTTOM_MM = pt_to_mm(32);
   $NOMOR_FONT_PT   = 12;
   $NOMOR_ANCHOR = "TOP_LEFT"; // TOP_LEFT / BOTTOM_LEFT
 
   $NAMA_Y_RATIO = 0.50;
-  $NAMA_Y_OFFSET_MM = pt_to_mm(5);
+  $NAMA_Y_OFFSET_MM = pt_to_mm(5) + 5;
   $NAMA_FONT_PT = 30;
 
   $INST_Y_RATIO = 0.44;
